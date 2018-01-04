@@ -1,13 +1,14 @@
 const _ = require('lodash');
-const Path = require('path-parser');
-const { URL } = require('url');
 const mongoose = require('mongoose');
+
 const requireLogin = require('../middlewares/requireLogin');
 const requireCredits = require('../middlewares/requireCredits');
 const Mailer = require('../services/Mailer');
 const surveyTemplate = require('../services/emailTemplates/surveyTemplate');
-
+const SurveyService = require('../service/survey.service.js');
 const Survey = mongoose.model('surveys');
+
+const surveyService = new SurveyService();
 
 module.exports = app => {
   app.get('/api/surveys', requireLogin, async (req, res) => {
@@ -22,43 +23,9 @@ module.exports = app => {
     res.send('Thanks for voting!');
   });
 
-  app.post('/api/surveys/webhooks', async (req, res) => {
-    try {
-      const p = new Path('/api/surveys/:surveyId/:choice');
-
-      const surveys = req.body
-          .map(surveyData => {
-            const match = p.test(new URL(surveyData.url).pathname);
-            if (match) {
-              return { email: surveyData.email, surveyId: match.surveyId, choice: match.choice };
-            }
-          })
-          .filter(item => item !== null && item !== undefined);
-
-      const uniqueServeys = _.uniqBy(surveys, 'email', 'surveyId');
-
-      for (let survey of uniqueServeys) {
-        await Survey.updateOne(
-            {
-              _id: survey.surveyId,
-              recipients: {
-                $elemMatch: { email: survey.email, responded: false }
-              }
-            },
-            {
-              $inc: { [survey.choice]: 1 },
-              $set: { 'recipients.$.responded': true },
-              lastResponded: new Date()
-            }
-        ).exec();
-
-        res.send({});
-      }
-    } catch(error) {
-      console.log(error);
-    }
-
-
+  app.post('/api/surveys/webhooks', (req, res) => {
+    const result = surveyService.updateSurveys(req.body);
+    res.send(result);
   });
 
   app.post('/api/surveys', requireLogin, requireCredits, async (req, res) => {
@@ -68,7 +35,7 @@ module.exports = app => {
       title,
       subject,
       body,
-      recipients: Mailer.getSurveyListFromEmailString(recipients),
+      recipients: surveyService.getRecipientListFromEmailString(recipients),
       _user: req.user.id,
       dateSent: Date.now()
     });
